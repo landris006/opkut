@@ -17,19 +17,28 @@ reader.on('line', (line) => {
 // amint befejeződött a file beolvasása el is kezdhetjük a számolást
 reader.on('close', () => {
   //console.log(cities);
-  solve(cities);
+  main(cities);
 });
 
-function solve(cities) {
-  const matrix = createMatrix(cities);
-  console.log(matrix);
-  /* cities.forEach((city) => {
-    writer.write(city.join('    '));
+function main(cities) {
+  const result = ['Eredmény:'];
+  let matrix = createMatrix(cities);
+  matrix = solveFirstPhase(matrix);
+
+  const lastRowIndex = matrix.length - 1;
+  const lastColIndex = matrix[lastRowIndex].length - 1;
+  if (matrix[lastRowIndex][lastColIndex] !== 0) {
+    result[1] =
+      'Bizonyos feltételek nem tudnak egyszerre teljesülni! (első leállási tábla)';
+  }
+
+  result.forEach((city) => {
+    writer.write(city); //.join('    ')
     writer.write('\n');
-  }); */
+  });
 }
 
-const createMatrix = (cities) => {
+function createMatrix(cities) {
   const matrix = [];
 
   // felső sor labeljeinek felvétele:
@@ -49,21 +58,22 @@ const createMatrix = (cities) => {
       const row = topLabels.map((label) => {
         const labelIndex = topLabels.indexOf(label) - 1;
         switch (labelIndex) {
+          // oszlop labelek
           case -1:
             return `u${i + 1}*`;
-
+          // döntési változók
           case i:
             return 1;
-
+          // v-k a "saját soraikban"
           case i + cities.length:
             return -1;
-
+          // v-k a "következő sorban, kivéve az elsőben"
           case i + cities.length - 1:
             return i !== 0 ? 1 : 0;
-
+          // u*-ok
           case i + 2 * cities.length:
             return 1;
-
+          // b vektor
           case 4 * cities.length:
             return Number(cities[i][2]);
 
@@ -78,18 +88,19 @@ const createMatrix = (cities) => {
       const row = topLabels.map((label) => {
         const labelIndex = topLabels.indexOf(label) - 1;
         switch (labelIndex) {
+          // oszlop labelek
           case -1:
             return `u${i + 1}`;
-
+          // döntési változók
           case i - cities.length:
             return 1;
-
+          // v-k a "következő sorban, kivéve az elsőben"
           case i - 1:
             return i !== cities.length ? 1 : 0;
-
+          // u-k
           case i + 2 * cities.length:
             return 1;
-
+          // b vektor
           case 4 * cities.length:
             return tankLimit;
 
@@ -115,8 +126,76 @@ const createMatrix = (cities) => {
   matrix.push(targetRow);
 
   // alternatív célfüggvény felvitele:
-  const alternativeTargetRow;
+  const conditionRows = matrix.filter((row) => row[0].includes('*'));
+  const alternativeTargetRow = sumOfRows(conditionRows);
+  alternativeTargetRow[0] = 'z2';
+  for (let i = 0; i < alternativeTargetRow.length; i++) {
+    if (i > cities.length * 2 && i !== topLabels.length - 1) {
+      alternativeTargetRow[i] = 0;
+    }
+  }
   matrix.push(alternativeTargetRow);
 
+  console.table('INITIAL TABLE');
+  console.table(matrix);
   return matrix;
-};
+}
+
+function solveFirstPhase(matrix) {
+  for (let j = 1; j < (matrix[0].length - 2) / 4 + 1; j++) {
+    const pivotItem = matrix[j][j];
+    const pivotRow = matrix[j];
+
+    // mivel mindenhol 1 van, ez a for loop igazából felesleges
+    for (let i = 1; i < pivotRow.length - 1; i++) {
+      pivotRow[i] /= pivotItem;
+    }
+
+    matrix[j][0] = matrix[0][j];
+
+    for (let i = 1; i < matrix.length; i++) {
+      if (matrix[i][j] === 0 || i === j) {
+        continue;
+      }
+      const number = matrix[i][j] / pivotItem;
+      matrix[i] = differenceOfRows([matrix[i], pivotRow], number);
+    }
+
+    console.table(matrix);
+  }
+  console.log('END OF FIRST PHASE');
+  return matrix;
+}
+
+// összead sorokat (akármennyit)
+function sumOfRows(rows) {
+  // (a reduce() (beépített JS tömb metódus) végigmegy egy tömbön, és mindig számon tartja az előző elemet, így rendkívül egyszerűvé teszi többek között egy tömb elemeinek összeadását)
+  return rows.reduce((previuosRow, row) => {
+    if (!previuosRow) {
+      return;
+    }
+    const sum = [];
+    for (let i = 0; i < row.length; i++) {
+      sum.push(row[i] + previuosRow[i]);
+    }
+    return sum;
+  });
+}
+
+// kivonja az első sorból a második sor számszorosát (csak 2 sorral működik, így kicsit feleslegessé válik a reduce(), lehetne szerintem szebben is, de lusta vagyok)
+function differenceOfRows(rows, number = 1) {
+  return rows.reduce((previuosRow, row) => {
+    if (!previuosRow) {
+      return;
+    }
+    const diff = [];
+    for (let i = 0; i < row.length; i++) {
+      diff.push(
+        typeof row[i] === 'number'
+          ? previuosRow[i] - number * row[i]
+          : previuosRow[i]
+      );
+    }
+    return diff;
+  });
+}
