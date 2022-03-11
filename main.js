@@ -21,21 +21,42 @@ reader.on('close', () => {
 });
 
 function main(cities) {
-  const result = ['Eredmény:'];
+  const constraint = cities.filter((city) => city[2] > tankLimit); // h atúl kicsi a tank, el se kezdjük a megoldást
+  if (constraint.length) {
+    writer.write('Nem megoldható a feladat, túl kicsi a tank.');
+    return;
+  }
+
   let matrix = createMatrix(cities);
+
   matrix = solveFirstPhase(matrix);
 
   const lastRowIndex = matrix.length - 1;
   const lastColIndex = matrix[lastRowIndex].length - 1;
+  // ha az első leállási tábla vélfüggvényének értéke nem 0, akkor a feladat nem megoldható
   if (matrix[lastRowIndex][lastColIndex] !== 0) {
-    result[1] =
-      'Bizonyos feltételek nem tudnak egyszerre teljesülni! (első leállási tábla)';
+    writer.write(
+      'Bizonyos feltételek nem tudnak egyszerre teljesülni! (első leállási tábla)'
+    );
+    return;
   }
 
-  result.forEach((city) => {
-    writer.write(city); //.join('    ')
+  matrix = solveSecondPhase(matrix);
+
+  // ha a visszakapott érték nem egy tömb, akkor hibába futottunk, ezt fogjuk kiírni
+  if (!Array.isArray(matrix)) {
+    writer.write(matrix);
+  }
+
+  // ha minden rendben lefutott kiírjuk a városokat, illetve hogy mennyit kell bennük tankolni
+  const cityNames = cities.map((city) => city[0]);
+  for (let i = 0; i < matrix.length; i++) {
+    if (!cityNames.includes(matrix[i][0])) {
+      continue;
+    }
+    writer.write(matrix[i][0] + '    ' + matrix[i][matrix[i].length - 1]);
     writer.write('\n');
-  });
+  }
 }
 
 function createMatrix(cities) {
@@ -126,45 +147,115 @@ function createMatrix(cities) {
   matrix.push(targetRow);
 
   // alternatív célfüggvény felvitele:
-  const conditionRows = matrix.filter((row) => row[0].includes('*'));
+  const conditionRows = matrix.filter((row) => row[0].includes('*')); // kiszűrjük azokat a sorokat, amelyek label-je tartalmaz *-ot
   const alternativeTargetRow = sumOfRows(conditionRows);
   alternativeTargetRow[0] = 'z2';
   for (let i = 0; i < alternativeTargetRow.length; i++) {
     if (i > cities.length * 2 && i !== topLabels.length - 1) {
-      alternativeTargetRow[i] = 0;
+      alternativeTargetRow[i] = 0; // kinullázzuk a sima "u" értékeket
     }
   }
   matrix.push(alternativeTargetRow);
 
-  console.table('INITIAL TABLE');
+  console.log('INITIAL TABLE');
   console.table(matrix);
   return matrix;
 }
 
 function solveFirstPhase(matrix) {
   for (let j = 1; j < (matrix[0].length - 2) / 4 + 1; j++) {
-    const pivotItem = matrix[j][j];
-    const pivotRow = matrix[j];
-
-    // mivel mindenhol 1 van, ez a for loop igazából felesleges
-    for (let i = 1; i < pivotRow.length - 1; i++) {
-      pivotRow[i] /= pivotItem;
-    }
-
-    matrix[j][0] = matrix[0][j];
-
-    for (let i = 1; i < matrix.length; i++) {
-      if (matrix[i][j] === 0 || i === j) {
-        continue;
-      }
-      const number = matrix[i][j] / pivotItem;
-      matrix[i] = differenceOfRows([matrix[i], pivotRow], number);
-    }
-
+    pivot(matrix, [j, j]); // pivotálást hajt végre, első argumentum a mátrix, második argumentum egy tömb, amely a pivot elem koordinátáit tartalmazza
+    // ennél a feladatnál az első tábla pivot elemei mindig ezek lesznek (feltéve, hogy egyik távolság sem nagyobb mint a tankunk kapacitása, bár ebben az esetben alapból megoldhatatlan a feladat)
     console.table(matrix);
   }
   console.log('END OF FIRST PHASE');
   return matrix;
+}
+
+function solveSecondPhase(matrix) {
+  const labelRow = matrix[0];
+
+  // 'kitisztítjuk' a mátrixunkat, *-os elemeket kivesszük
+  matrix.pop(); // utolsó sor leválasztása
+  let first; // megkeressük az első csillagos elemet, igazából ez is jó lenne: labelRow.indexOf('u1*')
+  for (let i = 0; i < labelRow.length; i++) {
+    first = labelRow.indexOf(labelRow[i]);
+    if (labelRow[i].includes('*')) {
+      break;
+    }
+  }
+  const count = labelRow.filter((item) => item.includes('*')).length; // megszámoljuk, hány *-os elem van
+  // az első *-os elemtől kezdve, eltávolítunk annyi elemet, ahány csillagos elem van
+  matrix.forEach((row) => {
+    row.splice(first, count);
+  });
+  // eltávolítottuk az alternatív célfüggvényt, illetve az összes u*-ot
+
+  let solving = true;
+
+  while (solving) {
+    const targetRow = matrix[matrix.length - 1];
+    const targetRowNoLabel = [...targetRow]; // lemásoljuk a targetRow-t, az eredetit nem akarjuk változtatni
+    targetRowNoLabel.shift(); // leválasztjuk az első értéket
+    targetRowNoLabel.pop(); // leválasztjuk az utolsó értéket
+
+    // Meghatározzuk a generálóelem oszlopát, a legnagyobb érték helye a célfv. sorában
+    const max = targetRowNoLabel.reduce((a, b) => {
+      return Math.max(a, b);
+    }, -Infinity);
+    // Ha a célfüggvény legnagyobb értéke nem pozitív, akkor készen vagyunk
+    if (max <= 0) {
+      solving = false;
+      console.log('FINISHED!');
+      return matrix;
+    }
+
+    const col = targetRow.indexOf(max);
+    // szűk keresztmetszet meghatározása
+    let bottleneck = [];
+    for (let i = 1; i < matrix.length - 1; i++) {
+      const ratio = matrix[i][matrix[i].length - 1] / matrix[i][col];
+      bottleneck.push(ratio);
+    }
+    const min = bottleneck.reduce((a, b) => {
+      if (a <= 0) {
+        return b;
+      }
+      return Math.min(a, b);
+    }, Infinity);
+    // ha idáig eljutottunk, azaz a célfüggvény sorában van pozitív érték, azonban az összes szűk keresztmetszet negatív, a célfüggvény nem korlátos
+    if (min < 0) {
+      solving = false;
+      return 'Nem korlátos célfüggvény!';
+    }
+
+    const row = bottleneck.indexOf(min) + 1; // +1 mert van egy label is
+
+    pivot(matrix, [row, col]);
+
+    console.table(matrix);
+  }
+}
+// egy pivotálást hajt végre a bemeneti mátrixon, második argumentuma egy tömb, a generáló elem koordinátáival
+function pivot(matrix, [row, col]) {
+  const pivotItem = matrix[row][col];
+  const pivotRow = matrix[row];
+
+  // leosztjuk a pivot elem sorának elemeit a pivot elemmel
+  for (let i = 1; i < pivotRow.length; i++) {
+    pivotRow[i] /= pivotItem;
+  }
+
+  matrix[row][0] = matrix[0][col]; // pivot elem oszlopának label-jét bevisszük a bázis label-ekhez
+
+  // többi sorból kivonjuk a pivot sor számszorosát, úgy, hogy a pivot elem oszlopában a többi értéket kinullázzuk
+  for (let i = 1; i < matrix.length; i++) {
+    if (i === row) {
+      continue;
+    }
+    const number = matrix[i][col] / pivotItem;
+    matrix[i] = differenceOfRows([matrix[i], pivotRow], number);
+  }
 }
 
 // összead sorokat (akármennyit)
